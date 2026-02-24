@@ -30,7 +30,8 @@
 //usage:#define openvt_example_usage
 //usage:       "openvt 2 /bin/ash\n"
 
-#include <linux/vt.h>
+#include <wos/vt.h>
+
 #include "libbb.h"
 
 /* "Standard" openvt's man page (we do not support all of this):
@@ -68,131 +69,122 @@ bbox:
 */
 
 /* Helper: does this fd understand VT_xxx? */
-static int not_vt_fd(int fd)
-{
-	struct vt_stat vtstat;
-	return ioctl(fd, VT_GETSTATE, &vtstat); /* !0: error, it's not VT fd */
+static int not_vt_fd(int fd) {
+    struct vt_stat vtstat;
+    return ioctl(fd, VT_GETSTATE, &vtstat); /* !0: error, it's not VT fd */
 }
 
 /* Helper: get a fd suitable for VT_xxx */
-static int get_vt_fd(void)
-{
-	int fd;
+static int get_vt_fd(void) {
+    int fd;
 
-	/* Do we, by chance, already have it? */
-	for (fd = 0; fd < 3; fd++)
-		if (!not_vt_fd(fd))
-			return fd;
-	fd = open(DEV_CONSOLE, O_RDONLY | O_NONBLOCK);
-	if (fd >= 0 && !not_vt_fd(fd))
-		return fd;
-	bb_simple_error_msg_and_die("can't find open VT");
+    /* Do we, by chance, already have it? */
+    for (fd = 0; fd < 3; fd++)
+        if (!not_vt_fd(fd)) return fd;
+    fd = open(DEV_CONSOLE, O_RDONLY | O_NONBLOCK);
+    if (fd >= 0 && !not_vt_fd(fd)) return fd;
+    bb_simple_error_msg_and_die("can't find open VT");
 }
 
-static int find_free_vtno(void)
-{
-	int vtno;
-	int fd = get_vt_fd();
+static int find_free_vtno(void) {
+    int vtno;
+    int fd = get_vt_fd();
 
-	errno = 0;
-	/*xfunc_error_retval = 3; - do we need compat? */
-	if (ioctl(fd, VT_OPENQRY, &vtno) != 0 || vtno <= 0)
-		bb_simple_perror_msg_and_die("can't find open VT");
-// Not really needed, grep for DAEMON_CLOSE_EXTRA_FDS
-//	if (fd > 2)
-//		close(fd);
-	return vtno;
+    errno = 0;
+    /*xfunc_error_retval = 3; - do we need compat? */
+    if (ioctl(fd, VT_OPENQRY, &vtno) != 0 || vtno <= 0) bb_simple_perror_msg_and_die("can't find open VT");
+    // Not really needed, grep for DAEMON_CLOSE_EXTRA_FDS
+    //	if (fd > 2)
+    //		close(fd);
+    return vtno;
 }
 
 /* vfork scares gcc, it generates bigger code.
  * Keep it away from main program.
  * TODO: move to libbb; or adapt existing libbb's spawn().
  */
-static NOINLINE void vfork_child(char **argv)
-{
-	if (vfork() == 0) {
-		/* CHILD */
-		/* Try to make this VT our controlling tty */
-		setsid(); /* lose old ctty */
-		ioctl(STDIN_FILENO, TIOCSCTTY, 0 /* 0: don't forcibly steal */);
-		//bb_error_msg("our sid %d", getsid(0));
-		//bb_error_msg("our pgrp %d", getpgrp());
-		//bb_error_msg("VT's sid %d", tcgetsid(0));
-		//bb_error_msg("VT's pgrp %d", tcgetpgrp(0));
-		BB_EXECVP_or_die(argv);
-	}
+static NOINLINE void vfork_child(char** argv) {
+    if (vfork() == 0) {
+        /* CHILD */
+        /* Try to make this VT our controlling tty */
+        setsid(); /* lose old ctty */
+        ioctl(STDIN_FILENO, TIOCSCTTY, 0 /* 0: don't forcibly steal */);
+        // bb_error_msg("our sid %d", getsid(0));
+        // bb_error_msg("our pgrp %d", getpgrp());
+        // bb_error_msg("VT's sid %d", tcgetsid(0));
+        // bb_error_msg("VT's pgrp %d", tcgetpgrp(0));
+        BB_EXECVP_or_die(argv);
+    }
 }
 
-int openvt_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
-int openvt_main(int argc UNUSED_PARAM, char **argv)
-{
-	char vtname[sizeof(VC_FORMAT) + sizeof(int)*3];
-	struct vt_stat vtstat;
-	char *str_c;
-	int vtno;
-	int flags;
-	enum {
-		OPT_c = (1 << 0),
-		OPT_w = (1 << 1),
-		OPT_s = (1 << 2),
-		OPT_l = (1 << 3),
-		OPT_f = (1 << 4),
-		OPT_v = (1 << 5),
-	};
+int openvt_main(int argc, char** argv) MAIN_EXTERNALLY_VISIBLE;
+int openvt_main(int argc UNUSED_PARAM, char** argv) {
+    char vtname[sizeof(VC_FORMAT) + sizeof(int) * 3];
+    struct vt_stat vtstat;
+    char* str_c;
+    int vtno;
+    int flags;
+    enum {
+        OPT_c = (1 << 0),
+        OPT_w = (1 << 1),
+        OPT_s = (1 << 2),
+        OPT_l = (1 << 3),
+        OPT_f = (1 << 4),
+        OPT_v = (1 << 5),
+    };
 
-	/* "+" - stop on first non-option */
-	flags = getopt32(argv, "+c:wslfv", &str_c);
-	argv += optind;
+    /* "+" - stop on first non-option */
+    flags = getopt32(argv, "+c:wslfv", &str_c);
+    argv += optind;
 
-	if (flags & OPT_c) {
-		/* Check for illegal vt number: < 1 or > 63 */
-		vtno = xatou_range(str_c, 1, 63);
-	} else {
-		vtno = find_free_vtno();
-	}
+    if (flags & OPT_c) {
+        /* Check for illegal vt number: < 1 or > 63 */
+        vtno = xatou_range(str_c, 1, 63);
+    } else {
+        vtno = find_free_vtno();
+    }
 
-	/* Grab new VT */
-	sprintf(vtname, VC_FORMAT, vtno);
-	/* (Try to) clean up stray open fds above fd 2 */
-	bb_daemon_helper(DAEMON_CLOSE_EXTRA_FDS);
-	close(STDIN_FILENO);
-	/*setsid(); - BAD IDEA: after we exit, child is SIGHUPed... */
-	xopen(vtname, O_RDWR);
-	xioctl(STDIN_FILENO, VT_GETSTATE, &vtstat);
+    /* Grab new VT */
+    sprintf(vtname, VC_FORMAT, vtno);
+    /* (Try to) clean up stray open fds above fd 2 */
+    bb_daemon_helper(DAEMON_CLOSE_EXTRA_FDS);
+    close(STDIN_FILENO);
+    /*setsid(); - BAD IDEA: after we exit, child is SIGHUPed... */
+    xopen(vtname, O_RDWR);
+    xioctl(STDIN_FILENO, VT_GETSTATE, &vtstat);
 
-	if (flags & OPT_s) {
-		console_make_active(STDIN_FILENO, vtno);
-	}
+    if (flags & OPT_s) {
+        console_make_active(STDIN_FILENO, vtno);
+    }
 
-	if (!argv[0]) {
-		argv--;
-		argv[0] = (char *) get_shell_name();
-		/*argv[1] = NULL; - already is */
-	}
+    if (!argv[0]) {
+        argv--;
+        argv[0] = (char*)get_shell_name();
+        /*argv[1] = NULL; - already is */
+    }
 
-	xdup2(STDIN_FILENO, STDOUT_FILENO);
-	xdup2(STDIN_FILENO, STDERR_FILENO);
+    xdup2(STDIN_FILENO, STDOUT_FILENO);
+    xdup2(STDIN_FILENO, STDERR_FILENO);
 
 #ifdef BLOAT
-	{
-	/* Handle -l (login shell) option */
-	const char *prog = argv[0];
-	if (flags & OPT_l)
-		argv[0] = xasprintf("-%s", argv[0]);
-	}
+    {
+        /* Handle -l (login shell) option */
+        const char* prog = argv[0];
+        if (flags & OPT_l) argv[0] = xasprintf("-%s", argv[0]);
+    }
 #endif
 
-	vfork_child(argv);
-	if (flags & OPT_w) {
-		/* We have only one child, wait for it */
-		safe_waitpid(-1, NULL, 0); /* loops on EINTR */
-		if (flags & OPT_s) {
-			console_make_active(STDIN_FILENO, vtstat.v_active);
-			// Compat: even with -c N (try to) disallocate:
-			// # /usr/app/kbd-1.12/bin/openvt -f -c 9 -ws sleep 5
-			// openvt: could not deallocate console 9
-			xioctl(STDIN_FILENO, VT_DISALLOCATE, (void*)(ptrdiff_t)vtno);
-		}
-	}
-	return EXIT_SUCCESS;
+    vfork_child(argv);
+    if (flags & OPT_w) {
+        /* We have only one child, wait for it */
+        safe_waitpid(-1, NULL, 0); /* loops on EINTR */
+        if (flags & OPT_s) {
+            console_make_active(STDIN_FILENO, vtstat.v_active);
+            // Compat: even with -c N (try to) disallocate:
+            // # /usr/app/kbd-1.12/bin/openvt -f -c 9 -ws sleep 5
+            // openvt: could not deallocate console 9
+            xioctl(STDIN_FILENO, VT_DISALLOCATE, (void*)(ptrdiff_t)vtno);
+        }
+    }
+    return EXIT_SUCCESS;
 }

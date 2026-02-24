@@ -40,79 +40,70 @@
 //usage:       "  1:55pm  up  2:30, load average: 0.09, 0.04, 0.00\n"
 
 #include "libbb.h"
-#ifdef __linux__
-# include <sys/sysinfo.h>
+#if defined(__linux__) || defined(__WOS__)
+#include <sys/sysinfo.h>
 #endif
 
 #ifndef FSHIFT
-# define FSHIFT 16              /* nr of bits of precision */
+#define FSHIFT 16 /* nr of bits of precision */
 #endif
-#define FIXED_1      (1 << FSHIFT)     /* 1.0 as fixed-point */
-#define LOAD_INT(x)  (unsigned)((x) >> FSHIFT)
+#define FIXED_1 (1 << FSHIFT) /* 1.0 as fixed-point */
+#define LOAD_INT(x) (unsigned)((x) >> FSHIFT)
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1 - 1)) * 100)
 
-int uptime_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
-int uptime_main(int argc UNUSED_PARAM, char **argv UNUSED_PARAM)
-{
-	unsigned updays, uphours, upminutes;
-	unsigned opts;
-	struct sysinfo info;
-	struct tm *current_time;
-	time_t current_secs;
+int uptime_main(int argc, char** argv) MAIN_EXTERNALLY_VISIBLE;
+int uptime_main(int argc UNUSED_PARAM, char** argv UNUSED_PARAM) {
+    unsigned updays, uphours, upminutes;
+    unsigned opts;
+    struct sysinfo info;
+    struct tm* current_time;
+    time_t current_secs;
 
-	opts = getopt32(argv, "s");
+    opts = getopt32(argv, "s");
 
-	time(&current_secs);
-	sysinfo(&info);
+    time(&current_secs);
+    sysinfo(&info);
 
-	if (opts) // -s
-		current_secs -= info.uptime;
+    if (opts)  // -s
+        current_secs -= info.uptime;
 
-	current_time = localtime(&current_secs);
+    current_time = localtime(&current_secs);
 
-	if (opts) { // -s
-		printf("%04u-%02u-%02u %02u:%02u:%02u\n",
-			current_time->tm_year + 1900, current_time->tm_mon + 1, current_time->tm_mday,
-			current_time->tm_hour, current_time->tm_min, current_time->tm_sec
-		);
-		/* The above way of calculating boot time is wobbly,
-		 * info.uptime has only 1 second precision, which makes
-		 * "uptime -s" wander +- one second.
-		 * /proc/uptime may be better, it has 0.01s precision.
-		 */
-		return EXIT_SUCCESS;
-	}
+    if (opts) {  // -s
+        printf("%04u-%02u-%02u %02u:%02u:%02u\n", current_time->tm_year + 1900, current_time->tm_mon + 1, current_time->tm_mday,
+               current_time->tm_hour, current_time->tm_min, current_time->tm_sec);
+        /* The above way of calculating boot time is wobbly,
+         * info.uptime has only 1 second precision, which makes
+         * "uptime -s" wander +- one second.
+         * /proc/uptime may be better, it has 0.01s precision.
+         */
+        return EXIT_SUCCESS;
+    }
 
-	printf(" %02u:%02u:%02u up ",
-			current_time->tm_hour, current_time->tm_min, current_time->tm_sec
-	);
-	updays = (unsigned) info.uptime / (unsigned)(60*60*24);
-	if (updays != 0)
-		printf("%u day%s, ", updays, (updays != 1) ? "s" : "");
-	upminutes = (unsigned) info.uptime / (unsigned)60;
-	uphours = (upminutes / (unsigned)60) % (unsigned)24;
-	upminutes %= 60;
-	if (uphours != 0)
-		printf("%2u:%02u", uphours, upminutes);
-	else
-		printf("%u min", upminutes);
+    printf(" %02u:%02u:%02u up ", current_time->tm_hour, current_time->tm_min, current_time->tm_sec);
+    updays = (unsigned)info.uptime / (unsigned)(60 * 60 * 24);
+    if (updays != 0) printf("%u day%s, ", updays, (updays != 1) ? "s" : "");
+    upminutes = (unsigned)info.uptime / (unsigned)60;
+    uphours = (upminutes / (unsigned)60) % (unsigned)24;
+    upminutes %= 60;
+    if (uphours != 0)
+        printf("%2u:%02u", uphours, upminutes);
+    else
+        printf("%u min", upminutes);
 
 #if ENABLE_FEATURE_UPTIME_UTMP_SUPPORT
-	{
-		struct utmpx *ut;
-		unsigned users = 0;
-		while ((ut = getutxent()) != NULL) {
-			if ((ut->ut_type == USER_PROCESS) && (ut->ut_user[0] != '\0'))
-				users++;
-		}
-		printf(",  %u users", users);
-	}
+    {
+        struct utmpx* ut;
+        unsigned users = 0;
+        while ((ut = getutxent()) != NULL) {
+            if ((ut->ut_type == USER_PROCESS) && (ut->ut_user[0] != '\0')) users++;
+        }
+        printf(",  %u users", users);
+    }
 #endif
 
-	printf(",  load average: %u.%02u, %u.%02u, %u.%02u\n",
-			LOAD_INT(info.loads[0]), LOAD_FRAC(info.loads[0]),
-			LOAD_INT(info.loads[1]), LOAD_FRAC(info.loads[1]),
-			LOAD_INT(info.loads[2]), LOAD_FRAC(info.loads[2]));
+    printf(",  load average: %u.%02u, %u.%02u, %u.%02u\n", LOAD_INT(info.loads[0]), LOAD_FRAC(info.loads[0]), LOAD_INT(info.loads[1]),
+           LOAD_FRAC(info.loads[1]), LOAD_INT(info.loads[2]), LOAD_FRAC(info.loads[2]));
 
-	return EXIT_SUCCESS;
+    return EXIT_SUCCESS;
 }

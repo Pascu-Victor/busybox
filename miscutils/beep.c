@@ -41,89 +41,86 @@
 //usage:     "\n	-r	Repetitions"
 //usage:     "\n	-n	Start new tone"
 
-#include "libbb.h"
+#include <wos/kd.h>
 
-#include <linux/kd.h>
+#include "libbb.h"
 #ifndef CLOCK_TICK_RATE
-# define CLOCK_TICK_RATE 1193180
+#define CLOCK_TICK_RATE 1193180
 #endif
 
 /* defaults */
 #ifndef CONFIG_FEATURE_BEEP_FREQ
-# define FREQ (4000)
+#define FREQ (4000)
 #else
-# define FREQ (CONFIG_FEATURE_BEEP_FREQ)
+#define FREQ (CONFIG_FEATURE_BEEP_FREQ)
 #endif
 #ifndef CONFIG_FEATURE_BEEP_LENGTH_MS
-# define LENGTH (30)
+#define LENGTH (30)
 #else
-# define LENGTH (CONFIG_FEATURE_BEEP_LENGTH_MS)
+#define LENGTH (CONFIG_FEATURE_BEEP_LENGTH_MS)
 #endif
 #define DELAY (0)
 #define REPETITIONS (1)
 
-int beep_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
-int beep_main(int argc, char **argv)
-{
-	int speaker = get_console_fd_or_die();
-	unsigned tickrate_div_freq = tickrate_div_freq; /* for compiler */
-	unsigned length = length;
-	unsigned delay = delay;
-	unsigned rep = rep;
-	int c;
+int beep_main(int argc, char** argv) MAIN_EXTERNALLY_VISIBLE;
+int beep_main(int argc, char** argv) {
+    int speaker = get_console_fd_or_die();
+    unsigned tickrate_div_freq = tickrate_div_freq; /* for compiler */
+    unsigned length = length;
+    unsigned delay = delay;
+    unsigned rep = rep;
+    int c;
 
-	c = 'n';
-	while (c != -1) {
-		if (c == 'n') {
-			tickrate_div_freq = CLOCK_TICK_RATE / FREQ;
-			length = LENGTH;
-			delay = DELAY;
-			rep = REPETITIONS;
-		}
-		c = getopt(argc, argv, "f:l:d:r:n");
-/* TODO: -s, -c:
- * pipe stdin to stdout, but also beep after each line (-s) or char (-c)
- */
-		switch (c) {
-		case 'f':
-/* TODO: what "-f 0" should do? */
-			tickrate_div_freq = (unsigned)CLOCK_TICK_RATE / xatou(optarg);
-			continue;
-		case 'l':
-			length = xatou(optarg);
-			continue;
-		case 'd':
-/* TODO:
- * -d N, -D N
- * specify a delay of N milliseconds between repetitions.
- * -d specifies that this delay should only occur between beeps,
- * that is, it should not occur after the last repetition.
- * -D indicates that the delay should occur after every repetition
- */
-			delay = xatou(optarg);
-			continue;
-		case 'r':
-			rep = xatou(optarg);
-			continue;
-		case 'n':
-		case -1:
-			break;
-		default:
-			bb_show_usage();
-		}
-		while (rep) {
-//bb_error_msg("rep[%d] freq=%d, length=%d, delay=%d", rep, freq, length, delay);
-			xioctl(speaker, KIOCSOUND, (void*)(uintptr_t)tickrate_div_freq);
-			msleep(length);
-			ioctl(speaker, KIOCSOUND, (void*)0);
-			if (--rep)
-				msleep(delay);
-		}
-	}
+    c = 'n';
+    while (c != -1) {
+        if (c == 'n') {
+            tickrate_div_freq = CLOCK_TICK_RATE / FREQ;
+            length = LENGTH;
+            delay = DELAY;
+            rep = REPETITIONS;
+        }
+        c = getopt(argc, argv, "f:l:d:r:n");
+        /* TODO: -s, -c:
+         * pipe stdin to stdout, but also beep after each line (-s) or char (-c)
+         */
+        switch (c) {
+            case 'f':
+                /* TODO: what "-f 0" should do? */
+                tickrate_div_freq = (unsigned)CLOCK_TICK_RATE / xatou(optarg);
+                continue;
+            case 'l':
+                length = xatou(optarg);
+                continue;
+            case 'd':
+                /* TODO:
+                 * -d N, -D N
+                 * specify a delay of N milliseconds between repetitions.
+                 * -d specifies that this delay should only occur between beeps,
+                 * that is, it should not occur after the last repetition.
+                 * -D indicates that the delay should occur after every repetition
+                 */
+                delay = xatou(optarg);
+                continue;
+            case 'r':
+                rep = xatou(optarg);
+                continue;
+            case 'n':
+            case -1:
+                break;
+            default:
+                bb_show_usage();
+        }
+        while (rep) {
+            // bb_error_msg("rep[%d] freq=%d, length=%d, delay=%d", rep, freq, length, delay);
+            xioctl(speaker, KIOCSOUND, (void*)(uintptr_t)tickrate_div_freq);
+            msleep(length);
+            ioctl(speaker, KIOCSOUND, (void*)0);
+            if (--rep) msleep(delay);
+        }
+    }
 
-	if (ENABLE_FEATURE_CLEAN_UP)
-		close(speaker);
-	return EXIT_SUCCESS;
+    if (ENABLE_FEATURE_CLEAN_UP) close(speaker);
+    return EXIT_SUCCESS;
 }
 /*
  * so, e.g. Beethoven's 9th symphony "Ode an die Freude" would be
