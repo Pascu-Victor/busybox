@@ -49,7 +49,7 @@
 //config:	default y
 //config:	depends on DD
 //config:	help
-//config:	Enable support for status=noxfer/none option.
+//config:	Enable support for status=noxfer/none/progress option.
 
 //applet:IF_DD(APPLET_NOEXEC(dd, dd, BB_DIR_BIN, BB_SUID_DROP, dd))
 
@@ -92,6 +92,7 @@
 //usage:	IF_FEATURE_DD_STATUS(
 //usage:     "\n	status=noxfer	Suppress rate output"
 //usage:     "\n	status=none	Suppress all output"
+//usage:     "\n	status=progress	Show periodic transfer progress"
 //usage:	)
 //usage:     "\n"
 //usage:     "\nN may be suffixed by c (1), w (2), b (512), kB (1000), k (1024), MB, M, GB, G"
@@ -150,9 +151,10 @@ enum {
 	FLAG_ODIRECT       = (1 << 11) * ENABLE_FEATURE_DD_IBS_OBS,
 	/* end of output flags */
 	FLAG_TWOBUFS       = (1 << 12) * ENABLE_FEATURE_DD_IBS_OBS,
-	FLAG_COUNT         = 1 << 13,
-	FLAG_STATUS_NONE   = 1 << 14,
-	FLAG_STATUS_NOXFER = 1 << 15,
+	FLAG_COUNT           = 1 << 13,
+	FLAG_STATUS_NONE     = 1 << 14,
+	FLAG_STATUS_NOXFER   = 1 << 15,
+	FLAG_STATUS_PROGRESS = 1 << 16,
 };
 
 static void dd_output_status(int UNUSED_PARAM cur_signal)
@@ -162,6 +164,32 @@ static void dd_output_status(int UNUSED_PARAM cur_signal)
 	unsigned long long bytes_sec;
 	unsigned long long now_us = monotonic_us(); /* before fprintf */
 #endif
+#if ENABLE_FEATURE_DD_STATUS
+	int progress = (G.flags & FLAG_STATUS_PROGRESS);
+#else
+# define progress 0
+#endif
+
+	if (progress) {
+		/* status=progress: single overwriting line, no records in/out */
+#if ENABLE_FEATURE_DD_THIRD_STATUS_LINE
+		now_us = monotonic_us();
+		seconds = (now_us - G.begin_time_us) / 1000000.0;
+		bytes_sec = (seconds > 0) ? (G.total_bytes / seconds) : 0;
+		fprintf(stderr, "\r%llu bytes (%sB) copied, %f s, %sB/s",
+				G.total_bytes,
+				make_human_readable_str(G.total_bytes, 1, 0),
+				seconds,
+				make_human_readable_str(bytes_sec, 1, 0));
+#else
+		fprintf(stderr, "\r%"OFF_FMT"u+%"OFF_FMT"u records in, "
+				"%"OFF_FMT"u+%"OFF_FMT"u records out",
+				G.in_full, G.in_part,
+				G.out_full, G.out_part);
+#endif
+		alarm(1); /* re-arm for next periodic update */
+		return;
+	}
 
 	/* Deliberately using %u, not %d */
 	fprintf(stderr, "%"OFF_FMT"u+%"OFF_FMT"u records in\n"
@@ -196,6 +224,10 @@ static void dd_output_status(int UNUSED_PARAM cur_signal)
 			/* show fractional digit, use suffixes */
 			make_human_readable_str(bytes_sec, 1, 0)
 	);
+#endif
+
+#if !ENABLE_FEATURE_DD_STATUS
+# undef progress
 #endif
 }
 
@@ -326,7 +358,7 @@ int dd_main(int argc UNUSED_PARAM, char **argv)
 #endif
 #if ENABLE_FEATURE_DD_STATUS
 	static const char status_words[] ALIGN1 =
-		"none\0""noxfer\0";
+		"none\0""noxfer\0""progress\0";
 #endif
 	enum {
 		OP_bs = 0,
@@ -496,6 +528,12 @@ int dd_main(int argc UNUSED_PARAM, char **argv)
 #endif
 #if ENABLE_FEATURE_DD_THIRD_STATUS_LINE
 	G.begin_time_us = monotonic_us();
+#endif
+#if ENABLE_FEATURE_DD_STATUS
+	if (G.flags & FLAG_STATUS_PROGRESS) {
+		signal_SA_RESTART_empty_mask(SIGALRM, dd_output_status);
+		alarm(1);
+	}
 #endif
 
 	if (infile) {
@@ -668,6 +706,13 @@ int dd_main(int argc UNUSED_PARAM, char **argv)
 
 	exitcode = EXIT_SUCCESS;
  out_status:
+#if ENABLE_FEATURE_DD_STATUS
+	if (G.flags & FLAG_STATUS_PROGRESS) {
+		alarm(0); /* cancel any pending alarm */
+		/* end the progress line before printing final status */
+		fputc('\n', stderr);
+	}
+#endif
 	if (!ENABLE_FEATURE_DD_STATUS || !(G.flags & FLAG_STATUS_NONE))
 		dd_output_status(0);
 
