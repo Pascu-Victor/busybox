@@ -171,6 +171,12 @@
 #include "common_bufsiz.h"
 #include "unicode.h"
 
+/* WOS extension: WOSLINK flag in st_mode marks transparent VFS directories
+ * that should not be recursed into (e.g., /wki mount points). */
+#ifndef S_ISWLNK
+#define S_ISWLNK(m) ((m) & 0x10000)
+#endif
+
 
 /* This is a NOEXEC applet. Be very careful! */
 
@@ -856,6 +862,10 @@ static unsigned count_dirs(struct dnode **dn, int which)
 		 || name[0] != '.'
 		 || (name[1] && (name[1] != '.' || name[2]))
 		) {
+			/* Skip WOSLINK dirs during recursion to prevent infinite
+			 * traversal through WKI mount points */
+			if (which == SPLIT_SUBDIR && S_ISWLNK((*dn)->dn_mode))
+				continue;
 			dirs++;
 		}
 	}
@@ -921,6 +931,9 @@ static struct dnode **splitdnarray(struct dnode **dn, int which)
 			 || name[0] != '.'
 			 || (name[1] && (name[1] != '.' || name[2]))
 			) {
+				/* Skip WOSLINK dirs during recursion */
+				if (which == SPLIT_SUBDIR && S_ISWLNK((*dn)->dn_mode))
+					continue;
 				dnp[d++] = *dn;
 			}
 		} else
