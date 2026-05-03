@@ -9,7 +9,11 @@
  */
 #include <sys/socket.h> /* linux/if_arp.h needs it on some systems */
 #include <arpa/inet.h>
-#include <linux/if_arp.h>
+#ifdef __WOS__
+# include <net/if_arp.h>
+#else
+# include <linux/if_arp.h>
+#endif
 
 #include "libbb.h"
 #include "rt_names.h"

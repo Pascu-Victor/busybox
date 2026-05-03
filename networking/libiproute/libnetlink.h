@@ -2,11 +2,15 @@
 #ifndef LIBNETLINK_H
 #define LIBNETLINK_H 1
 
-#include <linux/types.h>
+#ifdef __WOS__
+# include "wos_iproute_compat.h"
+#else
+# include <linux/types.h>
 /* We need linux/types.h because older kernels use __u32 etc
  * in linux/[rt]netlink.h. 2.6.19 seems to be ok, though */
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
+# include <linux/netlink.h>
+# include <linux/rtnetlink.h>
+#endif
 
 PUSH_AND_SET_FUNCTION_VISIBILITY_TO_HIDDEN
 
@@ -16,10 +20,18 @@ struct rtnl_handle {
 	struct sockaddr_nl peer;
 	uint32_t           seq;
 	uint32_t           dump;
+#ifdef __WOS__
+	int                dump_type;
+	int                dump_family;
+#endif
 };
 
 extern void xrtnl_open(struct rtnl_handle *rth) FAST_FUNC;
-#define rtnl_close(rth) (close((rth)->fd))
+#ifdef __WOS__
+# define rtnl_close(rth) ((void)(rth))
+#else
+# define rtnl_close(rth) (close((rth)->fd))
+#endif
 extern void xrtnl_wilddump_request(struct rtnl_handle *rth, int fam, int type) FAST_FUNC;
 extern int rtnl_dump_request(struct rtnl_handle *rth, int type, void *req, int len) FAST_FUNC;
 extern int xrtnl_dump_filter(struct rtnl_handle *rth,

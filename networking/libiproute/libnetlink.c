@@ -13,6 +13,210 @@
 #include "libbb.h"
 #include "libnetlink.h"
 
+#ifdef __WOS__
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <wos/netctl.h>
+
+static void wos_make_nladdr(struct sockaddr_nl *nladdr)
+{
+	memset(nladdr, 0, sizeof(*nladdr));
+	nladdr->nl_family = AF_NETLINK;
+}
+
+void FAST_FUNC xrtnl_open(struct rtnl_handle *rth/*, unsigned subscriptions*/)
+{
+	memset(rth, 0, sizeof(*rth));
+	rth->fd = -1;
+	rth->local.nl_family = AF_NETLINK;
+	rth->seq = time(NULL);
+}
+
+void FAST_FUNC xrtnl_wilddump_request(struct rtnl_handle *rth, int family, int type)
+{
+	rth->dump = ++rth->seq;
+	rth->dump_type = type;
+	rth->dump_family = family;
+}
+
+int FAST_FUNC rtnl_dump_request(struct rtnl_handle *rth, int type, void *req, int len)
+{
+	(void)req;
+	(void)len;
+	xrtnl_wilddump_request(rth, AF_UNSPEC, type);
+	return 0;
+}
+
+static int wos_emit_link(struct rtnl_handle *rth,
+		int (*filter)(const struct sockaddr_nl *, struct nlmsghdr *n, void *) FAST_FUNC,
+		void *arg, const struct wos_net_if_info *info)
+{
+	struct {
+		struct nlmsghdr n;
+		struct ifinfomsg i;
+		char buf[256];
+	} req;
+	struct sockaddr_nl nladdr;
+	const char qdisc[] = "noop";
+
+	memset(&req, 0, sizeof(req));
+	wos_make_nladdr(&nladdr);
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	req.n.nlmsg_type = RTM_NEWLINK;
+	req.n.nlmsg_flags = NLM_F_MULTI;
+	req.n.nlmsg_seq = rth->dump;
+	req.n.nlmsg_pid = rth->local.nl_pid;
+	req.i.ifi_family = AF_UNSPEC;
+	req.i.ifi_type = info->type;
+	req.i.ifi_index = (int)info->ifindex;
+	req.i.ifi_flags = info->flags;
+	req.i.ifi_change = 0xffffffffU;
+	addattr_l(&req.n, sizeof(req), IFLA_IFNAME, (void *)info->name, strlen(info->name) + 1);
+	addattr_l(&req.n, sizeof(req), IFLA_ADDRESS, (void *)info->addr, info->addr_len);
+	addattr_l(&req.n, sizeof(req), IFLA_BROADCAST, (void *)info->broadcast, info->addr_len);
+	addattr_l(&req.n, sizeof(req), IFLA_MTU, (void *)&info->mtu, sizeof(info->mtu));
+	addattr_l(&req.n, sizeof(req), IFLA_QDISC, (void *)qdisc, sizeof(qdisc));
+	addattr_l(&req.n, sizeof(req), IFLA_OPERSTATE, (void *)&info->operstate, sizeof(info->operstate));
+	return filter(&nladdr, &req.n, arg);
+}
+
+static int wos_emit_addr(struct rtnl_handle *rth,
+		int (*filter)(const struct sockaddr_nl *, struct nlmsghdr *n, void *) FAST_FUNC,
+		void *arg, const struct wos_net_addr_info *info)
+{
+	struct {
+		struct nlmsghdr n;
+		struct ifaddrmsg ifa;
+		char buf[256];
+	} req;
+	struct sockaddr_nl nladdr;
+
+	memset(&req, 0, sizeof(req));
+	wos_make_nladdr(&nladdr);
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
+	req.n.nlmsg_type = RTM_NEWADDR;
+	req.n.nlmsg_flags = NLM_F_MULTI;
+	req.n.nlmsg_seq = rth->dump;
+	req.n.nlmsg_pid = rth->local.nl_pid;
+	req.ifa.ifa_family = info->family;
+	req.ifa.ifa_prefixlen = info->prefix_len;
+	req.ifa.ifa_scope = info->scope;
+	req.ifa.ifa_index = (int)info->ifindex;
+	req.ifa.ifa_flags = (uint8_t)info->flags;
+	addattr_l(&req.n, sizeof(req), IFA_ADDRESS, (void *)info->address, 4);
+	addattr_l(&req.n, sizeof(req), IFA_LOCAL, (void *)info->local, 4);
+	addattr_l(&req.n, sizeof(req), IFA_BROADCAST, (void *)info->broadcast, 4);
+	addattr_l(&req.n, sizeof(req), IFA_LABEL, (void *)info->label, strlen(info->label) + 1);
+	addattr32(&req.n, sizeof(req), IFA_FLAGS, info->flags);
+	return filter(&nladdr, &req.n, arg);
+}
+
+int FAST_FUNC xrtnl_dump_filter(struct rtnl_handle *rth,
+		int (*filter)(const struct sockaddr_nl *, struct nlmsghdr *, void *) FAST_FUNC,
+		void *arg1)
+{
+	int ret = 0;
+
+	if (rth->dump_type == RTM_GETLINK) {
+		size_t count = 0;
+		if (wos_net_if_list(NULL, &count) < 0)
+			bb_simple_perror_msg_and_die("wos_net_if_list");
+		struct wos_net_if_info *items = xzalloc(count * sizeof(*items));
+		size_t cap = count;
+		if (wos_net_if_list(items, &cap) < 0)
+			bb_simple_perror_msg_and_die("wos_net_if_list");
+		for (size_t i = 0; i < cap; i++) {
+			ret = wos_emit_link(rth, filter, arg1, &items[i]);
+			if (ret < 0)
+				break;
+		}
+		free(items);
+		return ret;
+	}
+
+	if (rth->dump_type == RTM_GETADDR) {
+		size_t count = 0;
+		if (wos_net_addr_list(NULL, &count) < 0)
+			bb_simple_perror_msg_and_die("wos_net_addr_list");
+		struct wos_net_addr_info *items = xzalloc(count * sizeof(*items));
+		size_t cap = count;
+		if (wos_net_addr_list(items, &cap) < 0)
+			bb_simple_perror_msg_and_die("wos_net_addr_list");
+		for (size_t i = 0; i < cap; i++) {
+			if (rth->dump_family != AF_UNSPEC && rth->dump_family != items[i].family)
+				continue;
+			ret = wos_emit_addr(rth, filter, arg1, &items[i]);
+			if (ret < 0)
+				break;
+		}
+		free(items);
+		return ret;
+	}
+
+	errno = EOPNOTSUPP;
+	return -1;
+}
+
+static int wos_apply_addr_msg(struct nlmsghdr *n)
+{
+	struct ifaddrmsg *ifa = NLMSG_DATA(n);
+	struct rtattr *tb[IFA_MAX + 1];
+	struct wos_net_addr_req req;
+	int len = n->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa));
+
+	if (n->nlmsg_type != RTM_NEWADDR && n->nlmsg_type != RTM_DELADDR) {
+		errno = EOPNOTSUPP;
+		return -1;
+	}
+	if (ifa->ifa_family != AF_INET) {
+		errno = EAFNOSUPPORT;
+		return -1;
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.ifindex = ifa->ifa_index;
+	req.family = ifa->ifa_family;
+	req.prefix_len = ifa->ifa_prefixlen;
+	req.scope = ifa->ifa_scope;
+	req.flags = ifa->ifa_flags;
+	req.replace = (n->nlmsg_flags & NLM_F_REPLACE) != 0;
+
+	parse_rtattr(tb, IFA_MAX, IFA_RTA(ifa), len);
+	if (tb[IFA_ADDRESS])
+		memcpy(req.address, RTA_DATA(tb[IFA_ADDRESS]), RTA_PAYLOAD(tb[IFA_ADDRESS]));
+	if (tb[IFA_LOCAL])
+		memcpy(req.local, RTA_DATA(tb[IFA_LOCAL]), RTA_PAYLOAD(tb[IFA_LOCAL]));
+	else
+		memcpy(req.local, req.address, 4);
+	if (tb[IFA_FLAGS])
+		req.flags = *(__u32 *)RTA_DATA(tb[IFA_FLAGS]);
+
+	if (n->nlmsg_type == RTM_DELADDR)
+		return wos_net_addr_del(&req);
+	return wos_net_addr_set(&req);
+}
+
+int FAST_FUNC rtnl_send_check(struct rtnl_handle *rth UNUSED_PARAM, const void *buf, int len)
+{
+	struct nlmsghdr *n = (struct nlmsghdr *)buf;
+	if (len < (int)sizeof(*n) || (int)n->nlmsg_len > len) {
+		errno = EINVAL;
+		return -1;
+	}
+	return wos_apply_addr_msg(n);
+}
+
+int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl UNUSED_PARAM, struct nlmsghdr *n,
+		pid_t peer UNUSED_PARAM, unsigned groups UNUSED_PARAM,
+		struct nlmsghdr *answer UNUSED_PARAM,
+		int (*junk)(struct sockaddr_nl *, struct nlmsghdr *, void *) UNUSED_PARAM,
+		void *jarg UNUSED_PARAM)
+{
+	return wos_apply_addr_msg(n);
+}
+
+#else
+
 void FAST_FUNC xrtnl_open(struct rtnl_handle *rth/*, unsigned subscriptions*/)
 {
 	memset(rth, 0, sizeof(*rth));
@@ -357,6 +561,8 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 	free(buf);
 	return retval;
 }
+
+#endif
 
 int FAST_FUNC addattr32(struct nlmsghdr *n, int maxlen, int type, uint32_t data)
 {

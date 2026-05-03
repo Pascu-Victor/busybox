@@ -6,17 +6,24 @@
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
 #include <net/if.h>
+#ifndef __WOS__
 /*#include <net/if_packet.h> - not needed? */
-#include <netpacket/packet.h>
+# include <netpacket/packet.h>
+#endif
 #include <netinet/if_ether.h>
 
-#include <linux/if_vlan.h>
+#ifndef __WOS__
+# include <linux/if_vlan.h>
+#endif
 #if ENABLE_FEATURE_IP_LINK_CAN
 # include <linux/can/netlink.h>
 #endif
 #include "ip_common.h"  /* #include "libbb.h" is inside */
 #include "rt_names.h"
 #include "utils.h"
+#ifdef __WOS__
+# include <wos/netctl.h>
+#endif
 
 #undef  ETH_P_8021AD
 #define ETH_P_8021AD            0x88A8
@@ -213,6 +220,26 @@ static void set_netns(char *dev, int netns)
 /* Exits on error */
 static int get_address(char *dev, int *htype)
 {
+#ifdef __WOS__
+	size_t count = 0;
+
+	if (wos_net_if_list(NULL, &count) < 0)
+		bb_simple_perror_msg_and_die("wos_net_if_list");
+	struct wos_net_if_info *items = xzalloc(count * sizeof(*items));
+	size_t cap = count;
+	if (wos_net_if_list(items, &cap) < 0)
+		bb_simple_perror_msg_and_die("wos_net_if_list");
+	for (size_t i = 0; i < cap; i++) {
+		if (strncmp(items[i].name, dev, IFNAMSIZ) == 0) {
+			int alen = items[i].addr_len;
+			*htype = items[i].type;
+			free(items);
+			return alen;
+		}
+	}
+	free(items);
+	bb_error_msg_and_die("can't find device '%s'", dev);
+#else
 	struct ifreq ifr;
 	struct sockaddr_ll me;
 	int s;
@@ -235,6 +262,7 @@ static int get_address(char *dev, int *htype)
 	close(s);
 	*htype = me.sll_hatype;
 	return me.sll_halen;
+#endif
 }
 
 /* Exits on error */
