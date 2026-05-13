@@ -895,6 +895,7 @@ static int send_queries(struct ns *ns)
 	unsigned char reply[512];
 	uint8_t rcode;
 	len_and_sockaddr *local_lsa;
+	len_and_sockaddr from_lsa;
 	struct pollfd pfd;
 	int servfail_retry = 0;
 	int n_replies = 0;
@@ -913,8 +914,6 @@ static int send_queries(struct ns *ns)
 	 */
 	xbind(pfd.fd, &local_lsa->u.sa, local_lsa->len);
 	free(local_lsa);
-	/* Make read/writes know the destination */
-	xconnect(pfd.fd, &ns->lsa->u.sa, ns->lsa->len);
 	ndelay_on(pfd.fd);
 
 	retry_interval = timeout / G.default_retry;
@@ -931,7 +930,8 @@ static int send_queries(struct ns *ns)
 				if (G.query[qn].qlen == 0)
 					continue; /* this one was replied already */
 
-				if (write(pfd.fd, G.query[qn].query, G.query[qn].qlen) < 0) {
+				if (sendto(pfd.fd, G.query[qn].query, G.query[qn].qlen, 0,
+						&ns->lsa->u.sa, ns->lsa->len) < 0) {
 					bb_perror_msg("write to '%s'", ns->name);
 					n_replies = -1; /* "no go, try next server" */
 					goto ret;
@@ -946,7 +946,9 @@ static int send_queries(struct ns *ns)
 		if (poll(&pfd, 1, retry_interval - (tcur - tsent)) <= 0)
 			goto next;
 
-		recvlen = read(pfd.fd, reply, sizeof(reply));
+		from_lsa.len = sizeof(from_lsa.u);
+		recvlen = recvfrom(pfd.fd, reply, sizeof(reply), 0,
+				&from_lsa.u.sa, &from_lsa.len);
 		if (recvlen < 0) {
 			bb_simple_perror_msg("read");
  next:
@@ -996,7 +998,8 @@ static int send_queries(struct ns *ns)
 			//UNUSED: ns->failures++;
 			if (servfail_retry) {
 				servfail_retry--;
-				write(pfd.fd, G.query[qn].query, G.query[qn].qlen);
+				sendto(pfd.fd, G.query[qn].query, G.query[qn].qlen, 0,
+						&ns->lsa->u.sa, ns->lsa->len);
 				dbg("query %u resent\n", qn);
 				goto next;
 			}

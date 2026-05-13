@@ -4605,7 +4605,11 @@ showjob(struct job *jp, int mode)
 
 	if (mode & SHOW_ONLY_PGID) { /* jobs -p */
 		/* just output process (group) id of pipeline */
+#ifdef __WOS__
+		fprintf(out, "%ld\n", ps->ps_pid);
+#else
 		fprintf(out, "%d\n", ps->ps_pid);
+#endif
 		return;
 	}
 
@@ -4618,8 +4622,11 @@ showjob(struct job *jp, int mode)
 		s[col - 3] = '-';
 
 	if (mode & SHOW_PIDS)
+#ifdef __WOS__
+		col += fmtstr(s + col, 16, "%ld ", ps->ps_pid);
+#else
 		col += fmtstr(s + col, 16, "%d ", ps->ps_pid);
-
+#endif
 	psend = ps + jp->nprocs;
 
 	if (jp->state == JOBRUNNING) {
@@ -4647,7 +4654,11 @@ showjob(struct job *jp, int mode)
 		s[0] = '\0';
 		col = 33;
 		if (mode & SHOW_PIDS)
+#ifdef __WOS__
+			col = fmtstr(s, 48, "\n%*c%ld ", indent_col, ' ', ps->ps_pid) - 1;
+#else
 			col = fmtstr(s, 48, "\n%*c%d ", indent_col, ' ', ps->ps_pid) - 1;
+#endif
  start:
 		fprintf(out, "%s%*c%s%s",
 				s,

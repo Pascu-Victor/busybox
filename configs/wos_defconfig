@@ -1,6 +1,6 @@
 #
 # WOS defconfig for busybox
-# Dynamic libbusybox build with a broad syscall-screened applet set for WOS.
+# Single-binary BusyBox build with a broad syscall-screened applet set for WOS.
 # Used as an overlay on top of an allnoconfig baseline in scripts/build_busybox.sh.
 # Everything not listed here stays disabled unless selected by another option.
 #
@@ -23,7 +23,10 @@ CONFIG_BUSYBOX_EXEC_PATH="/bin/busybox"
 #
 # Build Options
 #
-CONFIG_BUILD_LIBBUSYBOX=y
+# The shared BusyBox launcher/libbusybox split currently trips WOS rtld
+# during process startup. Keep the WOS image on the monolithic binary path
+# until that loader path is fixed.
+CONFIG_BUILD_LIBBUSYBOXy
 CONFIG_FEATURE_SHARED_BUSYBOX=y
 CONFIG_LFS=y
 
@@ -260,9 +263,13 @@ CONFIG_IPADDR=y
 CONFIG_IPLINK=y
 CONFIG_FEATURE_IP_ADDRESS=y
 CONFIG_FEATURE_IP_LINK=y
+CONFIG_NSLOOKUP=y
+CONFIG_FEATURE_NSLOOKUP_BIG=y
+CONFIG_FEATURE_NSLOOKUP_LONG_OPTIONS=y
 CONFIG_PING=y
 CONFIG_PING6=y
 CONFIG_FEATURE_FANCY_PING=y
+CONFIG_WHOIS=y
 #
 # Shell
 #
@@ -281,6 +288,7 @@ CONFIG_ASH_RANDOM_SUPPORT=y
 CONFIG_ASH_EXPAND_PRMT=y
 CONFIG_ASH_GETOPTS=y
 CONFIG_ASH_HELP=y
+CONFIG_ASH_BASH_COMPAT=y
 CONFIG_FEATURE_SH_MATH=y
 CONFIG_FEATURE_SH_MATH_64=y
 CONFIG_FEATURE_SH_MATH_BASE=y
