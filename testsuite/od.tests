@@ -100,6 +100,12 @@ testing "od -b" \
 	"" "$input"
 SKIP=
 
+testing "od -An -tx1" \
+        "od -An -tx1 | tr -d ' \n'" \
+"0102030a414243fe" \
+	"" "$input"
+SKIP=
+
 testing "od -c" \
         "od -c" \
 "\
