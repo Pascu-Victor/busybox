@@ -28,6 +28,8 @@
 int clear_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int clear_main(int argc UNUSED_PARAM, char **argv UNUSED_PARAM)
 {
-	/* home; clear to the end of screen */
-	return full_write1_str(ESC"[H" ESC"[J") != 6;
+	static const char clear_sequence[] = ESC"[H" ESC"[2J" ESC"[3J";
+
+	/* home; clear display; clear scrollback */
+	return full_write1_str(clear_sequence) != sizeof(clear_sequence) - 1;
 }
