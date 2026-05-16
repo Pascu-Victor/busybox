@@ -711,6 +711,7 @@ int dd_main(int argc UNUSED_PARAM, char **argv)
 		alarm(0); /* cancel any pending alarm */
 		/* end the progress line before printing final status */
 		fputc('\n', stderr);
+		G.flags &= ~FLAG_STATUS_PROGRESS;
 	}
 #endif
 	if (!ENABLE_FEATURE_DD_STATUS || !(G.flags & FLAG_STATUS_NONE))
