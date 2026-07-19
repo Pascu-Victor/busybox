@@ -139,7 +139,7 @@
 //usage:     "\n	-S	Truncate long lines"
 //usage:	)
 //usage:	IF_FEATURE_LESS_RAW(
-//usage:     "\n	-R	Remove color escape codes in input"
+//usage:     "\n	-R	Display ANSI color escape sequences"
 //usage:	)
 //usage:     "\n	-~	Suppress ~s displayed past EOF"
 
@@ -470,6 +470,7 @@ static int at_end(void)
 static void read_lines(void)
 {
 	char *current_line, *p;
+	size_t current_line_alloc;
 	int w = width;
 	char last_terminated = terminated;
 	time_t last_time = 0;
@@ -488,16 +489,33 @@ static void read_lines(void)
 	if (option_mask32 & FLAG_N)
 		w -= 8;
 
-	p = current_line = ((char*)xmalloc(w + 5)) + 4;
+	current_line_alloc = w + 5;
+	p = current_line = ((char*)xmalloc(current_line_alloc)) + 4;
 	if (!last_terminated) {
 		const char *cp = flines[max_fline];
-		p = stpcpy(p, cp);
+		size_t existing_len = strlen(cp);
+
+		if (existing_len + 5 > current_line_alloc) {
+			current_line_alloc = existing_len + w + 5;
+			current_line = (char*)xrealloc(MEMPTR(current_line), current_line_alloc) + 4;
+		}
+		p = stpcpy(current_line, cp);
 		free(MEMPTR(cp));
 		/* last_line_pos is still valid from previous read_lines() */
 	} else {
 		max_fline++;
 		last_line_pos = 0;
 	}
+
+#define ENSURE_CURRENT_LINE_SPACE(extra) do { \
+		size_t used = p - current_line; \
+		size_t needed = used + (extra) + 1 + 4; \
+		if (needed > current_line_alloc) { \
+			current_line_alloc = needed + w + 16; \
+			current_line = (char*)xrealloc(MEMPTR(current_line), current_line_alloc) + 4; \
+			p = current_line + used; \
+		} \
+	} while (0)
 
 	while (1) { /* read lines until we reach cur_fline or wanted_match */
 		*p = '\0';
@@ -543,24 +561,32 @@ static void read_lines(void)
 			}
 #if ENABLE_FEATURE_LESS_RAW
 			if (option_mask32 & FLAG_R) {
-				if (c == '\033')
-					goto discard;
-				if (G.in_escape) {
-					if (isdigit(c)
-					 || c == '['
-					 || c == ';'
-					 || c == 'm'
-					) {
- discard:
-						G.in_escape = (c != 'm');
-						readpos++;
-						continue;
-					}
-					/* Hmm, unexpected end of "ESC [ N ; N m" sequence */
+				if (!G.in_escape && c == '\033')
+					G.in_escape = 1;
+				else if (G.in_escape == 1 && c == '[')
+					G.in_escape = 2;
+				else if (G.in_escape == 2
+				 && (isdigit(c) || c == ';' || c == ':')
+				) {
+					/* Keep collecting SGR parameters. */
+				} else if (G.in_escape == 2 && c == 'm') {
 					G.in_escape = 0;
+				} else if (G.in_escape) {
+					/* Not an SGR sequence: retain it for safe rendering. */
+					G.in_escape = 0;
+					goto process_regular_char;
+				} else {
+					goto process_regular_char;
 				}
+
+				ENSURE_CURRENT_LINE_SPACE(1);
+				*p++ = c;
+				*p = '\0';
+				readpos++;
+				continue;
 			}
 #endif
+ process_regular_char:
 			{
 				size_t new_last_line_pos = last_line_pos + 1;
 				if (c == '\t') {
@@ -580,6 +606,7 @@ static void read_lines(void)
 			}
 			/* NUL is substituted by '\n'! */
 			if (c == '\0') c = '\n';
+			ENSURE_CURRENT_LINE_SPACE(1);
 			*p++ = c;
 			*p = '\0';
 		} /* end of "read chars until we have a line" loop */
@@ -625,7 +652,8 @@ static void read_lines(void)
 			break;
 		}
 		max_fline++;
-		current_line = ((char*)xmalloc(w + 5)) + 4;
+		current_line_alloc = w + 5;
+		current_line = ((char*)xmalloc(current_line_alloc)) + 4;
 		p = current_line;
 		last_line_pos = 0;
 	} /* end of "read lines until we reach cur_fline" loop */
@@ -648,6 +676,7 @@ static void read_lines(void)
 	wanted_match = -1;
 #endif
 #undef readbuf
+#undef ENSURE_CURRENT_LINE_SPACE
 }
 
 #if ENABLE_FEATURE_LESS_FLAGS
@@ -781,6 +810,26 @@ static const char ctrlconv[] ALIGN1 =
 	"\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x40\x4b\x4c\x4d\x4e\x4f"
 	"\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f";
 
+#if ENABLE_FEATURE_LESS_RAW
+static size_t ansi_sgr_length(const char *str)
+{
+	const char *p;
+
+	if (str[0] != '\033' || str[1] != '[')
+		return 0;
+
+	p = str + 2;
+	while (*p) {
+		if (*p == 'm')
+			return p - str + 1;
+		if (!isdigit(*p) && *p != ';' && *p != ':')
+			return 0;
+		p++;
+	}
+	return 0;
+}
+#endif
+
 static void print_lineno(const char *line)
 {
 	const char *fmt = "        ";
@@ -807,18 +856,28 @@ static void print_found(const char *line)
 	char *growline;
 	regmatch_t match_structs;
 
-	char buf[width+1];
+	char *buf = xmalloc(strlen(line) + 1);
 	const char *str = line;
 	char *p = buf;
 	size_t n;
 
 	while (*str) {
+#if ENABLE_FEATURE_LESS_RAW
+		if (option_mask32 & FLAG_R) {
+			n = ansi_sgr_length(str);
+			if (n) {
+				str += n;
+				continue;
+			}
+		}
+#endif
 		n = strcspn(str, controls);
 		if (n) {
 			if (!str[n]) break;
 			memcpy(p, str, n);
 			p += n;
 			str += n;
+			continue;
 		}
 		n = strspn(str, controls);
 		memset(p, '.', n);
@@ -833,7 +892,7 @@ static void print_found(const char *line)
 	 * and NORMAL escape sequences placed around it.
 	 * NB: we regex against line, but insert text
 	 * from quarantined copy (buf[]) */
-	str = buf;
+	line = str = buf;
 	growline = NULL;
 	eflags = 0;
 	goto start;
@@ -859,6 +918,7 @@ static void print_found(const char *line)
 
 	printf("%s%s\n", growline ? growline : "", str);
 	free(growline);
+	free(buf);
 }
 #else
 void print_found(const char *line);
@@ -866,16 +926,27 @@ void print_found(const char *line);
 
 static void print_ascii(const char *str)
 {
-	char buf[width+1];
+	char *buf = xmalloc(strlen(str) + 1);
 	char *p;
 	size_t n;
 
 	while (*str) {
+#if ENABLE_FEATURE_LESS_RAW
+		if (option_mask32 & FLAG_R) {
+			n = ansi_sgr_length(str);
+			if (n) {
+				fwrite(str, 1, n, stdout);
+				str += n;
+				continue;
+			}
+		}
+#endif
 		n = strcspn(str, controls);
 		if (n) {
 			if (!str[n]) break;
 			printf("%.*s", (int) n, str);
 			str += n;
+			continue;
 		}
 		n = strspn(str, controls);
 		p = buf;
@@ -894,6 +965,7 @@ static void print_ascii(const char *str)
 		print_hilite(buf);
 	}
 	puts(str);
+	free(buf);
 }
 
 /* Print the buffer */
