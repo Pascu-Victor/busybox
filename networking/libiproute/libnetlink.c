@@ -90,6 +90,16 @@ static int wos_emit_addr(struct rtnl_handle *rth,
 		char buf[256];
 	} req;
 	struct sockaddr_nl nladdr;
+	size_t addr_len;
+
+	if (info->family == AF_INET)
+		addr_len = 4;
+	else if (info->family == AF_INET6)
+		addr_len = 16;
+	else {
+		errno = EAFNOSUPPORT;
+		return -1;
+	}
 
 	memset(&req, 0, sizeof(req));
 	wos_make_nladdr(&nladdr);
@@ -103,9 +113,10 @@ static int wos_emit_addr(struct rtnl_handle *rth,
 	req.ifa.ifa_scope = info->scope;
 	req.ifa.ifa_index = (int)info->ifindex;
 	req.ifa.ifa_flags = (uint8_t)info->flags;
-	addattr_l(&req.n, sizeof(req), IFA_ADDRESS, (void *)info->address, 4);
-	addattr_l(&req.n, sizeof(req), IFA_LOCAL, (void *)info->local, 4);
-	addattr_l(&req.n, sizeof(req), IFA_BROADCAST, (void *)info->broadcast, 4);
+	addattr_l(&req.n, sizeof(req), IFA_ADDRESS, (void *)info->address, addr_len);
+	addattr_l(&req.n, sizeof(req), IFA_LOCAL, (void *)info->local, addr_len);
+	if (info->family == AF_INET)
+		addattr_l(&req.n, sizeof(req), IFA_BROADCAST, (void *)info->broadcast, addr_len);
 	addattr_l(&req.n, sizeof(req), IFA_LABEL, (void *)info->label, strlen(info->label) + 1);
 	addattr32(&req.n, sizeof(req), IFA_FLAGS, info->flags);
 	return filter(&nladdr, &req.n, arg);
@@ -163,12 +174,17 @@ static int wos_apply_addr_msg(struct nlmsghdr *n)
 	struct rtattr *tb[IFA_MAX + 1];
 	struct wos_net_addr_req req;
 	int len = n->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa));
+	size_t addr_len;
 
 	if (n->nlmsg_type != RTM_NEWADDR && n->nlmsg_type != RTM_DELADDR) {
 		errno = EOPNOTSUPP;
 		return -1;
 	}
-	if (ifa->ifa_family != AF_INET) {
+	if (ifa->ifa_family == AF_INET)
+		addr_len = 4;
+	else if (ifa->ifa_family == AF_INET6)
+		addr_len = 16;
+	else {
 		errno = EAFNOSUPPORT;
 		return -1;
 	}
@@ -182,12 +198,20 @@ static int wos_apply_addr_msg(struct nlmsghdr *n)
 	req.replace = (n->nlmsg_flags & NLM_F_REPLACE) != 0;
 
 	parse_rtattr(tb, IFA_MAX, IFA_RTA(ifa), len);
+	if ((!tb[IFA_ADDRESS] && !tb[IFA_LOCAL])
+	 || (tb[IFA_ADDRESS] && RTA_PAYLOAD(tb[IFA_ADDRESS]) != addr_len)
+	 || (tb[IFA_LOCAL] && RTA_PAYLOAD(tb[IFA_LOCAL]) != addr_len)) {
+		errno = EINVAL;
+		return -1;
+	}
 	if (tb[IFA_ADDRESS])
-		memcpy(req.address, RTA_DATA(tb[IFA_ADDRESS]), RTA_PAYLOAD(tb[IFA_ADDRESS]));
+		memcpy(req.address, RTA_DATA(tb[IFA_ADDRESS]), addr_len);
 	if (tb[IFA_LOCAL])
-		memcpy(req.local, RTA_DATA(tb[IFA_LOCAL]), RTA_PAYLOAD(tb[IFA_LOCAL]));
+		memcpy(req.local, RTA_DATA(tb[IFA_LOCAL]), addr_len);
 	else
-		memcpy(req.local, req.address, 4);
+		memcpy(req.local, req.address, addr_len);
+	if (!tb[IFA_ADDRESS])
+		memcpy(req.address, req.local, addr_len);
 	if (tb[IFA_FLAGS])
 		req.flags = *(__u32 *)RTA_DATA(tb[IFA_FLAGS]);
 
